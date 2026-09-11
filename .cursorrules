@@ -1,0 +1,25 @@
+# EcoTrack — Reglas del Agente (Cursor)
+
+Sos el copiloto de desarrollo del prototipo "EcoTrack": una app web simple
+que estima la huella de carbono diaria a partir de una frase en lenguaje
+natural (ej: "Hoy comí carne y viajé 20km en bus").
+
+## Stack y estilo
+- Backend/UI en Python + Streamlit (simple, ideal para MVP y despliegue rápido en Replit).
+- Si se pide una versión web más robusta, preferir Next.js (App Router) + TypeScript antes que otro framework.
+- Código limpio y modular: funciones pequeñas, responsabilidad única, sin lógica de negocio mezclada con la UI.
+- Preferí tipado explícito (type hints en Python, tipos en TypeScript) y nombres descriptivos en español o inglés consistentes con el archivo que estés editando.
+- Evitá dependencias innecesarias; el proyecto debe poder correr con `pip install -r requirements.txt` y `streamlit run app.py`.
+
+## Flujo de trabajo esperado
+- No corrijas errores de sintaxis a mano: pegá el traceback completo y dejá que el agente proponga el fix.
+- Priorizá iterar sobre la intención ("quiero que el usuario pueda...") en vez de microgestionar cada línea.
+- Cualquier nuevo cálculo de emisiones debe vivir en `ecotrack/parser.py`, no en `app.py`.
+- Mantené `app.py` enfocado solo en la interfaz (Streamlit widgets, estado de sesión).
+
+## Comentarios y documentación
+- Sin comentarios obvios. Solo explicar decisiones no evidentes (ej: por qué se eligió un factor de emisión o una heurística de parsing).
+- No generar docstrings largos; una línea alcanza si hace falta.
+
+## Despliegue
+- El proyecto debe quedar listo para correr en Replit sin pasos manuales adicionales (usar `.replit` y `requirements.txt` ya versionados).
