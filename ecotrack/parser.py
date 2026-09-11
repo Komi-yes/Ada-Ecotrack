@@ -1,14 +1,24 @@
 """Estimador de huella de carbono a partir de texto en lenguaje natural.
 
-Enfoque basado en reglas (keywords + regex) para no depender de una API
-externa de pago: detecta menciones de comida y transporte en español y
-aplica factores de emisión promedio (kg CO2e) por porción o por km.
+[IA] Estructura y algoritmo generados a partir de la orquestación descrita
+en PROMPTS.md ("que la IA calcule un estimado de CO2" a partir de una frase
+como "Hoy comí carne y viajé 20km en bus"). Refinamiento humano: se decidió
+un enfoque léxico (stemming + diccionario de factores) en vez de una API de
+LLM externa, para que el prototipo no dependa de API keys ni costos de
+inferencia. La primera versión usaba solo regex de plurales; se reemplazó
+por stemming (NLTK, algoritmo Snowball para español) para cubrir
+conjugaciones verbales y variaciones morfológicas ("comí", "comiendo",
+"viajando", "buses") sin necesitar un modelo de lenguaje completo.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+
+from nltk.stem.snowball import SnowballStemmer
+
+_stemmer = SnowballStemmer("spanish")
 
 # Factores de emisión aproximados (kg CO2e). Fuente: promedios divulgados por
 # estudios de huella de carbono (Our World in Data / IPCC) simplificados para
@@ -20,12 +30,11 @@ FOOD_FACTORS: dict[str, float] = {
     "cerdo": 3.8,
     "pollo": 1.1,
     "pescado": 1.5,
-    "atun": 1.5,
+    "atún": 1.5,
     "huevo": 0.4,
-    "huevos": 0.4,
     "queso": 1.0,
     "leche": 0.6,
-    "lacteos": 1.0,
+    "lácteos": 1.0,
     "arroz": 0.5,
     "vegetales": 0.3,
     "verduras": 0.3,
@@ -42,12 +51,12 @@ TRANSPORT_FACTORS: dict[str, float] = {
     "moto": 0.113,
     "motocicleta": 0.113,
     "bus": 0.105,
-    "autobus": 0.105,
+    "autobús": 0.105,
     "colectivo": 0.105,
     "tren": 0.041,
     "metro": 0.041,
     "subte": 0.041,
-    "avion": 0.255,
+    "avión": 0.255,
     "vuelo": 0.255,
     "bicicleta": 0.0,
     "bici": 0.0,
@@ -60,14 +69,23 @@ DISTANCE_PATTERN = re.compile(
     r"(\d+(?:[.,]\d+)?)\s*(?:km|kms|kilometros|kilómetros)", re.IGNORECASE
 )
 
+TOKEN_PATTERN = re.compile(r"[a-záéíóúñ]+", re.IGNORECASE)
 
-def _strip_accents(text: str) -> str:
-    replacements = {
-        "á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u", "ñ": "n",
-    }
-    for accented, plain in replacements.items():
-        text = text.replace(accented, plain)
-    return text
+
+def _build_stem_index(factors: dict[str, float]) -> dict[str, tuple[str, float]]:
+    """Mapea el stem de cada palabra clave a (palabra original, factor).
+
+    Se usa el stem en vez de la palabra literal para que coincidan
+    variaciones morfológicas: "carne"/"carnes", "viajé"/"viajando", etc.
+    """
+    index: dict[str, tuple[str, float]] = {}
+    for word, factor in factors.items():
+        index[_stemmer.stem(word)] = (word, factor)
+    return index
+
+
+FOOD_STEM_INDEX = _build_stem_index(FOOD_FACTORS)
+TRANSPORT_STEM_INDEX = _build_stem_index(TRANSPORT_FACTORS)
 
 
 @dataclass
@@ -89,19 +107,23 @@ class EstimateResult:
 
 
 def estimate_co2(text: str) -> EstimateResult:
-    """Analiza una frase en lenguaje natural y estima el CO2 asociado."""
+    """Analiza una frase en lenguaje natural y estima el CO2 asociado.
 
-    normalized = _strip_accents(text.lower())
+    Pipeline: tokenizar -> stemmizar cada token (NLTK Snowball español) ->
+    buscar cada stem en los índices de comida/transporte -> emparejar
+    transporte con distancias en km encontradas en el texto (por orden de
+    aparición) -> acumular el resultado.
+    """
+
+    tokens = TOKEN_PATTERN.findall(text.lower())
+    stems = [_stemmer.stem(token) for token in tokens]
     result = EstimateResult()
 
-    # 1. Comida: cualquier palabra clave mencionada suma una porción.
     seen_food: set[str] = set()
-    for word, factor in FOOD_FACTORS.items():
-        if word in seen_food:
-            continue
-        pattern = re.compile(rf"\b{re.escape(word)}s?\b")
-        if pattern.search(normalized):
-            seen_food.add(word)
+    for stem in stems:
+        if stem in FOOD_STEM_INDEX and stem not in seen_food:
+            word, factor = FOOD_STEM_INDEX[stem]
+            seen_food.add(stem)
             result.add(
                 ItemEstimate(
                     label=word.capitalize(),
@@ -111,18 +133,13 @@ def estimate_co2(text: str) -> EstimateResult:
                 )
             )
 
-    # 2. Transporte: se busca un modo de transporte y, cerca, una distancia.
-    #    Si hay varias distancias en el texto pero un solo modo, se usa la
-    #    primera distancia encontrada como aproximación del MVP.
-    distances = [float(m.group(1).replace(",", ".")) for m in DISTANCE_PATTERN.finditer(normalized)]
+    distances = [float(m.group(1).replace(",", ".")) for m in DISTANCE_PATTERN.finditer(text.lower())]
     used_distance_idx = 0
     seen_transport: set[str] = set()
-    for word, factor in TRANSPORT_FACTORS.items():
-        if word in seen_transport:
-            continue
-        pattern = re.compile(rf"\b{re.escape(word)}\b")
-        if pattern.search(normalized):
-            seen_transport.add(word)
+    for stem in stems:
+        if stem in TRANSPORT_STEM_INDEX and stem not in seen_transport:
+            word, factor = TRANSPORT_STEM_INDEX[stem]
+            seen_transport.add(stem)
             distance_km = distances[used_distance_idx] if used_distance_idx < len(distances) else 1.0
             used_distance_idx += 1
             result.add(

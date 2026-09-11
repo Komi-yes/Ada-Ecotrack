@@ -9,19 +9,58 @@ ecosistema de desarrollo asistido por IA (reglas de agente + despliegue en
 la nube) y orquestación de agentes para pasar de una idea de alto nivel a un
 prototipo funcional, sin escribir cada línea a mano.
 
+## Cómo revisar este repositorio en su completitud
+
+Si estás evaluando este repo, seguí este orden — cada documento cubre un
+criterio distinto de la rúbrica y ninguno reemplaza a los demás:
+
+1. **[`ECOSYSTEM.md`](./ECOSYSTEM.md)** — cómo se configuró el ecosistema
+   de IA (qué herramientas se usaron realmente, qué modelo, qué restricción
+   de acceso hubo y cómo se resolvió). Empezá aquí para entender el
+   contexto de las decisiones de las demás secciones.
+2. **[`.cursorrules`](./.cursorrules)** — las reglas de agente reales,
+   aplicables por cualquier instalación de Cursor que abra esta carpeta.
+3. **[`PROMPTS.md`](./PROMPTS.md)** — log de los 5 prompts de alto nivel
+   dados durante la sesión y qué decisiones/artefactos generó el agente en
+   respuesta a cada uno. Es la evidencia de orquestación.
+4. **Este README, sección "Detalle del código"** — qué hace cada archivo y
+   por qué está escrito así.
+5. **[`ecotrack/parser.py`](./ecotrack/parser.py)** y
+   **[`app.py`](./app.py)** — el código en sí. Los comentarios marcados
+   `[IA]` señalan qué se generó por orquestación y qué refinamiento humano
+   se aplicó después.
+6. **[`tests/test_parser.py`](./tests/test_parser.py)** — evidencia de
+   verificación (no solo pruebas manuales). Correr con:
+   ```bash
+   pip install -r requirements-dev.txt
+   pytest tests/ -v
+   ```
+7. **`git log --oneline`** — el historial de commits sigue la misma
+   secuencia que `PROMPTS.md`; cada prompt de la sesión corresponde a uno o
+   más commits reales, no a un solo volcado de código de una vez.
+8. **[`VIBE_REPORT.md`](./VIBE_REPORT.md)** — la reflexión final pedida por
+   la consigna.
+9. **[`.replit`](./.replit)** — configuración de despliegue (ver
+   `ECOSYSTEM.md` para qué falta si se requiere la URL pública en vivo).
+
 ## Scaffolding del proyecto
 
 ```
 Ada-Ecotrack/
-├── app.py                   # Interfaz Streamlit (única capa de presentación)
+├── app.py                    # Interfaz Streamlit (única capa de presentación)
 ├── ecotrack/
-│   ├── __init__.py           # Marca el paquete; vacío a propósito
-│   └── parser.py             # Motor de estimación de CO2 (toda la lógica de negocio)
-├── requirements.txt          # Única dependencia externa: streamlit
-├── .replit                   # Config de ejecución/despliegue para Replit
-├── .cursorrules              # Reglas de personalidad/estilo para el agente en Cursor
-├── VIBE_REPORT.md            # Reflexión sobre el proceso de Vibe Coding
-└── README.md                 # Este archivo
+│   ├── __init__.py            # Marca el paquete; vacío a propósito
+│   └── parser.py              # Motor de estimación de CO2 (toda la lógica de negocio)
+├── tests/
+│   └── test_parser.py         # Suite automatizada del motor de estimación (pytest)
+├── requirements.txt           # Dependencias de runtime: streamlit, nltk
+├── requirements-dev.txt       # Runtime + pytest, para desarrollo/CI
+├── .replit                    # Config de ejecución/despliegue para Replit
+├── .cursorrules               # Reglas de personalidad/estilo para el agente en Cursor
+├── PROMPTS.md                 # Log de orquestación: prompts reales + qué generó la IA
+├── ECOSYSTEM.md               # Cómo se configuró el ecosistema de IA y por qué
+├── VIBE_REPORT.md             # Reflexión sobre el proceso de Vibe Coding
+└── README.md                  # Este archivo
 ```
 
 **Por qué esta estructura y no otra:**
@@ -33,9 +72,9 @@ Ada-Ecotrack/
 - Se armó como paquete Python (`ecotrack/`) en vez de un solo script para
   poder testear `estimate_co2()` de forma aislada (ver sección de pruebas
   manuales más abajo) sin tener que levantar Streamlit.
-- No hay carpeta `tests/` todavía porque el MVP se validó con pruebas
-  manuales por consola (ver más abajo); es lo primero que se agregaría en
-  una siguiente iteración.
+- Se agregó `tests/test_parser.py` (6 casos, pytest) para verificar el
+  motor de estimación de forma automatizada, en vez de depender solo de
+  pruebas manuales por consola.
 - Se eligió **Streamlit sobre Next.js** para este prototipo puntual porque
   el objetivo era validar la idea con el mínimo de piezas móviles: un solo
   proceso Python, sin build step, sin `package.json`, desplegable en
@@ -46,10 +85,22 @@ Ada-Ecotrack/
 
 ### `ecotrack/parser.py` — el motor de estimación
 
-Es un estimador **basado en reglas** (diccionarios de palabras clave +
-regex), no una llamada a un LLM externo. Se decidió así para que el
-prototipo funcione sin API keys ni costos de inferencia, algo importante
-para un MVP que se quiere poder correr y compartir de inmediato.
+Es un estimador **basado en reglas + procesamiento léxico** (diccionarios
+de factores + **stemming en español**), no una llamada a un LLM externo.
+Se decidió así para que el prototipo funcione sin API keys ni costos de
+inferencia, algo importante para un MVP que se quiere poder correr y
+compartir de inmediato.
+
+**Por qué stemming y no solo `\bword\b` + regex de plurales:** la primera
+versión de este archivo matcheaba palabras exactas (con un `s?` opcional
+solo para comida). Eso fallaba con conjugaciones ("comiendo", "viajando")
+y plurales irregulares ("buses" no matcheaba "bus"). Se reemplazó por
+`nltk.stem.snowball.SnowballStemmer("spanish")`: cada palabra clave del
+diccionario y cada token del texto de entrada se reduce a su raíz léxica
+(stem) antes de comparar, así "carne"/"carnes"/"cárnico" o "bus"/"buses"
+caen en el mismo stem. Ver el caso de prueba
+`test_stemming_cubre_conjugaciones_y_plurales` en `tests/test_parser.py`
+para la comparación concreta antes/después.
 
 Piezas del archivo:
 
@@ -61,15 +112,19 @@ Piezas del archivo:
   Data/IPCC) y redondeados para fines educativos, no para un reporte
   certificado.
 - `TRANSPORT_FACTORS: dict[str, float]` — mapea modos de transporte
-  (`"bus"`, `"auto"`, `"bici"`, `"avion"`, etc.) a un factor en
+  (`"bus"`, `"auto"`, `"bici"`, `"avión"`, etc.) a un factor en
   **kg de CO2 por km recorrido** (ej. auto ≈ 0.192 kg/km, bus ≈ 0.105 kg/km,
   bici/caminando = 0 kg/km).
 - `DISTANCE_PATTERN` — una regex (`\d+(?:[.,]\d+)?\s*(?:km|kms|kilometros|kilómetros)`)
   que extrae números seguidos de "km" o variantes, para asociarlos al modo
   de transporte detectado.
-- `_strip_accents(text)` — normaliza tildes y la ñ antes de buscar palabras
-  clave, para que "comí" y "comi" o "avión" y "avion" matcheen igual. Es
-  necesario porque el texto del usuario puede venir con o sin acentos.
+- `TOKEN_PATTERN` — regex que separa el texto en palabras (`[a-záéíóúñ]+`)
+  antes de aplicar el stemmer a cada una.
+- `_build_stem_index(factors)` — precalcula, para cada diccionario de
+  factores, un índice `stem -> (palabra original, factor)`, de forma que la
+  búsqueda en `estimate_co2` sea una consulta directa a diccionario (O(1)
+  por token) en vez de recorrer todas las palabras clave con regex por cada
+  llamada.
 - `ItemEstimate` (dataclass) — representa un ítem detectado individual:
   etiqueta (`label`), categoría (`"comida"` o `"transporte"`), detalle
   legible (`"1 porción estimada"` o `"20 km"`) y el CO2 calculado
@@ -78,24 +133,22 @@ Piezas del archivo:
   `total_co2_kg` corriendo; expone `.add()` para sumar un ítem y actualizar
   el total en un solo paso.
 - `estimate_co2(text: str) -> EstimateResult` — función pública principal:
-  1. Normaliza el texto (minúsculas + sin acentos).
-  2. Recorre `FOOD_FACTORS` y, por cada palabra clave que aparece como
-     palabra completa (`\b...\b`, con o sin "s" al final para plurales),
+  1. Tokeniza el texto y calcula el stem de cada token.
+  2. Busca cada stem en `FOOD_STEM_INDEX`; por cada coincidencia nueva,
      agrega un `ItemEstimate` de categoría `"comida"` asumiendo **una
      porción**.
   3. Extrae todas las distancias en km mencionadas en el texto con
      `DISTANCE_PATTERN`.
-  4. Recorre `TRANSPORT_FACTORS` y, por cada modo detectado, le asigna la
-     siguiente distancia disponible de la lista extraída (o `1.0 km` como
-     valor por defecto si no hay ninguna distancia en el texto), calcula
-     `factor * distancia` y agrega el `ItemEstimate` de categoría
-     `"transporte"`.
+  4. Busca cada stem en `TRANSPORT_STEM_INDEX`; por cada modo detectado, le
+     asigna la siguiente distancia disponible de la lista extraída (o
+     `1.0 km` por defecto si no hay ninguna), calcula `factor * distancia`
+     y agrega el `ItemEstimate` de categoría `"transporte"`.
   5. Devuelve el `EstimateResult` con el desglose completo y el total.
 
 Limitación de diseño conocida (documentada en el propio código): si el
 texto menciona dos modos de transporte y dos distancias, el emparejamiento
-se hace por **orden de aparición en los diccionarios**, no por proximidad
-textual real entre el modo y su distancia. Para el alcance del MVP (una
+se hace por **orden de aparición en el texto**, no por proximidad
+sintáctica real entre el modo y su distancia. Para el alcance del MVP (una
 actividad de comida + una de transporte por frase) es suficiente.
 
 ### `app.py` — la interfaz
@@ -169,6 +222,16 @@ for i in r.items:
 Salida esperada: `9.0` (6.9 kg por la carne + 2.1 kg por 20 km en bus a
 0.105 kg/km).
 
+## Correr la suite de tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests/ -v
+```
+
+6 casos, incluyendo el que verifica que el stemming detecta conjugaciones
+y plurales que el matching literal anterior no detectaba.
+
 ## Desplegar en Replit
 
 1. Crear un nuevo Repl importando este repositorio (`Import from GitHub`).
@@ -183,14 +246,15 @@ Salida esperada: `9.0` (6.9 kg por la carne + 2.1 kg por 20 km en bus a
 | "Hoy comí carne y viajé 20km en bus" | carne 6.9 kg + bus·20km 2.1 kg | ~9.0 kg |
 | "Almorcé pollo y fui caminando" | pollo 1.1 kg + caminando 0 kg | ~1.1 kg |
 | "Comí vegetales y viajé 5km en bici" | vegetales 0.3 kg + bici·5km 0 kg | ~0.3 kg |
+| "Estuve comiendo carnes y viajando 15 km en buses" | carne 6.9 kg + bus·15km 1.57 kg | ~8.47 kg |
 
 ## Limitaciones (MVP)
 
 - Los factores de emisión son promedios simplificados con fines educativos,
   no un cálculo certificado.
-- El parser es por palabras clave y regex (no usa un LLM externo), por lo
-  que frases muy ambiguas, sinónimos no incluidos en los diccionarios, o
-  redacciones fuera de español no se detectan.
+- El parser es por palabras clave + stemming (NLTK, no usa un LLM externo),
+  por lo que frases muy ambiguas, sinónimos no incluidos en los
+  diccionarios, o redacciones fuera de español no se detectan.
 - Si una frase menciona más de un alimento o más de un transporte, cada
   palabra clave detectada se cuenta como una porción/trayecto independiente
   (no hay deduplicación semántica más allá de evitar contar la misma
